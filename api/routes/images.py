@@ -29,6 +29,17 @@ def _parse_features_json(features_json):
     return None
 
 
+def _parse_dominant_colors(dominant_colors_json):
+    """Helper to safely parse dominant_colors_json from string or list"""
+    if dominant_colors_json is None:
+        return None
+    if isinstance(dominant_colors_json, list):
+        return dominant_colors_json
+    if isinstance(dominant_colors_json, str):
+        return json.loads(dominant_colors_json)
+    return None
+
+
 @router.post("/upload", response_model=List[ImageResponse])
 async def upload_images(
     files: List[UploadFile] = File(...),
@@ -82,6 +93,7 @@ async def upload_images(
                 saturation=image_record.saturation,
                 edge_density=image_record.edge_density,
                 dominant_color_hex=image_record.dominant_color_hex,
+                dominant_colors=_parse_dominant_colors(image_record.dominant_colors_json),
                 features_json=_parse_features_json(image_record.features_json),
                 created_at=image_record.created_at
             )
@@ -123,6 +135,7 @@ async def get_images(
                 saturation=image.saturation,
                 edge_density=image.edge_density,
                 dominant_color_hex=image.dominant_color_hex,
+                dominant_colors=_parse_dominant_colors(image.dominant_colors_json),
                 features_json=_parse_features_json(image.features_json),
                 created_at=image.created_at
             )
@@ -188,6 +201,7 @@ async def recompute_all_features(
                 saturation=img.saturation,
                 edge_density=img.edge_density,
                 dominant_color_hex=img.dominant_color_hex,
+                dominant_colors=_parse_dominant_colors(img.dominant_colors_json),
                 features_json=_parse_features_json(img.features_json),
                 created_at=img.created_at
             ) for img in updated_images
@@ -245,7 +259,7 @@ async def search_similar_images(
             for img, vector_sim in filtered_candidates:
                 # Prepare candidate features dict for traditional computation
                 candidate_features = {
-                    'features_json': _parse_features_json(img.features_json)
+                    'dominant_colors': _parse_dominant_colors(img.dominant_colors_json)
                 }
                 
                 # Compute traditional similarity (0 to 100)
@@ -284,6 +298,7 @@ async def search_similar_images(
                     saturation=img.saturation,
                     edge_density=img.edge_density,
                     dominant_color_hex=img.dominant_color_hex,
+                    dominant_colors=_parse_dominant_colors(img.dominant_colors_json),
                     features_json=_parse_features_json(img.features_json),
                     similarity=item['similarity'],
                     created_at=img.created_at

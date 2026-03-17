@@ -68,6 +68,7 @@ class DatabaseService:
                 saturation=features.get('saturation'),
                 edge_density=features.get('edge_density'),
                 dominant_color_hex=features.get('dominant_color_hex'),
+                dominant_colors_json=features.get('dominant_colors_json'),
                 features_json=features.get('features_json'),
                 dinov2_vector=features.get('dinov2_vector')
             )
@@ -106,6 +107,7 @@ class DatabaseService:
             image.saturation = features.get('saturation')
             image.edge_density = features.get('edge_density')
             image.dominant_color_hex = features.get('dominant_color_hex')
+            image.dominant_colors_json = features.get('dominant_colors_json')
             image.features_json = features.get('features_json')
             
             if 'dinov2_vector' in features:
