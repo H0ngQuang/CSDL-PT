@@ -289,15 +289,23 @@ class ImageProcessor:
         Returns:
             Dictionary of histogram features
         """
+        height, width = img.shape[:2]
+        total_pixels = height * width
+        
         hist_b = cv2.calcHist([img], [0], None, [16], [0, 256])
         hist_g = cv2.calcHist([img], [1], None, [16], [0, 256])
         hist_r = cv2.calcHist([img], [2], None, [16], [0, 256])
         
+        # Normalize to ratios (0.0 to 1.0) and round to 4 decimal places
+        hist_b_ratio = [round(float(val[0]) / total_pixels, 4) for val in hist_b]
+        hist_g_ratio = [round(float(val[0]) / total_pixels, 4) for val in hist_g]
+        hist_r_ratio = [round(float(val[0]) / total_pixels, 4) for val in hist_r]
+        
         return {
             "histogram": {
-                "blue": hist_b.flatten().tolist(),
-                "green": hist_g.flatten().tolist(),
-                "red": hist_r.flatten().tolist()
+                "blue": hist_b_ratio,
+                "green": hist_g_ratio,
+                "red": hist_r_ratio
             },
             "texture_score": float(edge_density),
             "quality_score": float(contrast)
