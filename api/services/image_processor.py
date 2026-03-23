@@ -5,8 +5,7 @@ Handles image processing and feature extraction
 
 import cv2
 import numpy as np
-from sklearn.cluster import KMeans
-from scipy.optimize import linear_sum_assignment
+
 from pathlib import Path
 import uuid
 import logging
@@ -88,12 +87,6 @@ class ImageProcessor:
             edges = cv2.Canny(gray, 100, 200)
             edge_density = float(np.sum(edges > 0) / (height * width))
             
-            # Dominant color (k-means on downsampled pixels)
-            dominant_hex = self._extract_dominant_color(img)
-            
-            # Extract top 3 dominant colors with ratios
-            dominant_colors = self._extract_top_colors(img, k=3)
-            
             # Histogram for features_json
             features_json = self._extract_histogram_features(img, edge_density, contrast)
             
@@ -121,9 +114,6 @@ class ImageProcessor:
                 'contrast': contrast,
                 'saturation': saturation,
                 'edge_density': edge_density,
-                'dominant_color_hex': dominant_hex,
-                'dominant_colors': dominant_colors,
-                'dominant_colors_json': json.dumps(dominant_colors),
                 'features_json': json.dumps(features_json),
                 'dinov2_vector': vector.tolist()
             }
@@ -132,146 +122,7 @@ class ImageProcessor:
             logger.error(f"Error extracting features: {e}")
             raise
     
-    def _extract_dominant_color(self, img: np.ndarray) -> str:
-        """
-        Extract dominant color using K-means clustering
-        
-        Args:
-            img: OpenCV image (BGR format)
-            
-        Returns:
-            Hex color string
-        """
-        # Downsample for performance
-        small_img = cv2.resize(img, (100, 100))
-        pixels = small_img.reshape(-1, 3).astype(np.float32)
-        
-        # K-means clustering
-        kmeans = KMeans(n_clusters=1, n_init=1, random_state=42)
-        kmeans.fit(pixels)
-        dominant_bgr = kmeans.cluster_centers_[0]
-        
-        # Convert BGR to RGB
-        dominant_rgb = dominant_bgr[::-1]
-        
-        # Convert to hex
-        dominant_hex = '#{:02x}{:02x}{:02x}'.format(
-            int(dominant_rgb[0]),
-            int(dominant_rgb[1]),
-            int(dominant_rgb[2])
-        )
-        
-        return dominant_hex
-    
-    def _extract_top_colors(self, img: np.ndarray, k: int = 3) -> list:
-        """
-        Extract top k dominant colors with their ratios using K-Means.
-        
-        Args:
-            img: OpenCV image (BGR format)
-            k: Number of dominant colors to extract
-            
-        Returns:
-            List of dicts sorted by ratio descending:
-            [{"hex": "#2a5f8e", "rgb": [42, 95, 142], "ratio": 0.52}, ...]
-        """
-        # Downsample for performance
-        small_img = cv2.resize(img, (100, 100))
-        pixels = small_img.reshape(-1, 3).astype(np.float32)
-        
-        # K-Means clustering with k clusters
-        kmeans = KMeans(n_clusters=k, n_init=3, random_state=42)
-        labels = kmeans.fit_predict(pixels)
-        
-        # Count pixels per cluster to get ratios
-        total_pixels = len(labels)
-        colors = []
-        for i in range(k):
-            count = int(np.sum(labels == i))
-            ratio = round(count / total_pixels, 4)
-            
-            # BGR -> RGB
-            bgr = kmeans.cluster_centers_[i]
-            rgb = [int(bgr[2]), int(bgr[1]), int(bgr[0])]
-            hex_color = '#{:02x}{:02x}{:02x}'.format(rgb[0], rgb[1], rgb[2])
-            
-            colors.append({
-                "hex": hex_color,
-                "rgb": rgb,
-                "ratio": ratio
-            })
-        
-        # Sort by ratio descending (most dominant first)
-        colors.sort(key=lambda c: c["ratio"], reverse=True)
-        return colors
-    
-    def _compute_color_similarity(self, colors1: list, colors2: list) -> float:
-        """
-        Compute color similarity between two sets of dominant colors.
-        
-        Uses Hungarian algorithm to optimally map colors from image 1 to image 2,
-        then computes weighted similarity based on LAB color distance.
-        
-        Args:
-            colors1: List of dominant colors from image 1 [{hex, rgb, ratio}, ...]
-            colors2: List of dominant colors from image 2 [{hex, rgb, ratio}, ...]
-            
-        Returns:
-            Similarity score between 0.0 and 100.0
-        """
-        if not colors1 or not colors2:
-            return 0.0
-        
-        n1 = len(colors1)
-        n2 = len(colors2)
-        
-        # Convert RGB colors to LAB for perceptually uniform distance
-        lab_colors1 = []
-        lab_colors2 = []
-        
-        for c in colors1:
-            rgb = np.array([[c["rgb"]]], dtype=np.uint8)
-            lab = cv2.cvtColor(rgb, cv2.COLOR_RGB2LAB)
-            lab_colors1.append(lab[0, 0].astype(np.float64))
-        
-        for c in colors2:
-            rgb = np.array([[c["rgb"]]], dtype=np.uint8)
-            lab = cv2.cvtColor(rgb, cv2.COLOR_RGB2LAB)
-            lab_colors2.append(lab[0, 0].astype(np.float64))
-        
-        # Build cost matrix (Euclidean distance in LAB space)
-        cost_matrix = np.zeros((n1, n2))
-        for i in range(n1):
-            for j in range(n2):
-                cost_matrix[i, j] = np.linalg.norm(lab_colors1[i] - lab_colors2[j])
-        
-        # Hungarian algorithm for optimal matching
-        row_idx, col_idx = linear_sum_assignment(cost_matrix)
-        
-        # Max possible LAB distance (~375 for extreme colors)
-        MAX_LAB_DISTANCE = 375.0
-        
-        # Compute weighted similarity for each matched pair
-        weighted_sim_sum = 0.0
-        weight_sum = 0.0
-        
-        for r, c in zip(row_idx, col_idx):
-            distance = cost_matrix[r, c]
-            color_sim = 1.0 - (distance / MAX_LAB_DISTANCE)
-            color_sim = max(color_sim, 0.0)
-            
-            # Weight = average ratio of the two matched colors
-            weight = (colors1[r]["ratio"] + colors2[c]["ratio"]) / 2.0
-            
-            weighted_sim_sum += color_sim * weight
-            weight_sum += weight
-        
-        if weight_sum == 0:
-            return 0.0
-        
-        similarity = (weighted_sim_sum / weight_sum) * 100.0
-        return min(max(similarity, 0.0), 100.0)
-    
+
     def _extract_histogram_features(
         self,
         img: np.ndarray,
@@ -323,35 +174,4 @@ class ImageProcessor:
         """
         return content_type.startswith('image/')
 
-    def compute_similarity(self, features1: Dict, features2: Dict) -> float:
-        """
-        Compute similarity between two images based on their dominant colors.
-        Uses Hungarian matching on top 3 colors in LAB color space,
-        weighted by each color's ratio.
-        
-        Args:
-            features1: Features dictionary of first image
-            features2: Features dictionary of second image
-            
-        Returns:
-            Similarity score between 0.0 and 100.0
-        """
-        try:
-            # Get dominant colors from features
-            colors1 = features1.get('dominant_colors')
-            colors2 = features2.get('dominant_colors')
 
-            # Parse from JSON string if needed
-            if isinstance(colors1, str):
-                colors1 = json.loads(colors1)
-            if isinstance(colors2, str):
-                colors2 = json.loads(colors2)
-
-            if not colors1 or not colors2:
-                return 0.0
-
-            return self._compute_color_similarity(colors1, colors2)
-
-        except Exception as e:
-            logger.error(f"Error computing similarity: {e}")
-            return 0.0

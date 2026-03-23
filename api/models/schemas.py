@@ -19,8 +19,7 @@ class ImageResponse(BaseModel):
     contrast: Optional[float] = None
     saturation: Optional[float] = None
     edge_density: Optional[float] = None
-    dominant_color_hex: Optional[str] = None
-    dominant_colors: Optional[list] = None
+
     features_json: Optional[dict] = None
     similarity: Optional[float] = None
     created_at: datetime

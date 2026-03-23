@@ -29,15 +29,6 @@ def _parse_features_json(features_json):
     return None
 
 
-def _parse_dominant_colors(dominant_colors_json):
-    """Helper to safely parse dominant_colors_json from string or list"""
-    if dominant_colors_json is None:
-        return None
-    if isinstance(dominant_colors_json, list):
-        return dominant_colors_json
-    if isinstance(dominant_colors_json, str):
-        return json.loads(dominant_colors_json)
-    return None
 
 
 @router.post("/upload", response_model=List[ImageResponse])
@@ -92,8 +83,6 @@ async def upload_images(
                 contrast=image_record.contrast,
                 saturation=image_record.saturation,
                 edge_density=image_record.edge_density,
-                dominant_color_hex=image_record.dominant_color_hex,
-                dominant_colors=_parse_dominant_colors(image_record.dominant_colors_json),
                 features_json=_parse_features_json(image_record.features_json),
                 created_at=image_record.created_at
             )
@@ -134,8 +123,6 @@ async def get_images(
                 contrast=image.contrast,
                 saturation=image.saturation,
                 edge_density=image.edge_density,
-                dominant_color_hex=image.dominant_color_hex,
-                dominant_colors=_parse_dominant_colors(image.dominant_colors_json),
                 features_json=_parse_features_json(image.features_json),
                 created_at=image.created_at
             )
@@ -200,8 +187,6 @@ async def recompute_all_features(
                 contrast=img.contrast,
                 saturation=img.saturation,
                 edge_density=img.edge_density,
-                dominant_color_hex=img.dominant_color_hex,
-                dominant_colors=_parse_dominant_colors(img.dominant_colors_json),
                 features_json=_parse_features_json(img.features_json),
                 created_at=img.created_at
             ) for img in updated_images
@@ -239,9 +224,7 @@ async def search_similar_images(
             # 3. Extract Features
             query_features = image_processor.extract_features(file_path)
             
-            # 4. Two-Stage Search Strategy
-            # Stage 1: Filter candidates using pgvector and DINOv2 embeddings
-            # We filter directly in the database for cosine_similarity (1 - distance) > 0.3
+            # Stage 1: Search using pgvector DINOv2 embeddings (100% vector similarity)
             query_vector = query_features.get('dinov2_vector')
             if not query_vector:
                 raise ValueError("Failed to extract DINOv2 vector from query image")
@@ -249,44 +232,15 @@ async def search_similar_images(
             filtered_candidates = db_service.search_images_by_vector(
                 db=db, 
                 query_vector=query_vector, 
-                threshold=0.3, # User specified threshold
-                limit=1000 # Fetch enough for stage 2 reranking
+                threshold=0.3,
+                limit=limit
             )
             
-            # Stage 2: Compute Hybrid Similarity Score
-            # Weighting: 50% DINOv2 Vector Similarity (from DB), 50% Traditional Features
-            scored_images = []
-            for img, vector_sim in filtered_candidates:
-                # Prepare candidate features dict for traditional computation
-                candidate_features = {
-                    'dominant_colors': _parse_dominant_colors(img.dominant_colors_json)
-                }
-                
-                # Compute traditional similarity (0 to 100)
-                traditional_similarity = image_processor.compute_similarity(query_features, candidate_features)
-                
-                # Combine scores
-                # vector_sim is 0.0 to 1.0. We scale it to 0-100 to match traditional
-                vector_similarity_percent = float(vector_sim) * 100.0
-                
-                # 50/50 Weighting
-                final_similarity = (vector_similarity_percent * 0.5) + (traditional_similarity * 0.5)
-                
-                scored_images.append({
-                    'image': img,
-                    'similarity': final_similarity,
-                    'vector_similarity': float(vector_sim), # Keep original for debug/info if needed
-                    'traditional_similarity': traditional_similarity
-                })
-            
-            # 5. Sort and Limit
-            scored_images.sort(key=lambda x: x['similarity'], reverse=True)
-            top_results = scored_images[:limit]
-            
-            # 6. Format Response
+            # Format Response
             response = []
-            for item in top_results:
-                img = item['image']
+            for img, vector_sim in filtered_candidates:
+                similarity_percent = float(vector_sim) * 100.0
+                
                 response.append(ImageResponse(
                     id=img.id,
                     file_name=img.file_name,
@@ -297,10 +251,8 @@ async def search_similar_images(
                     contrast=img.contrast,
                     saturation=img.saturation,
                     edge_density=img.edge_density,
-                    dominant_color_hex=img.dominant_color_hex,
-                    dominant_colors=_parse_dominant_colors(img.dominant_colors_json),
                     features_json=_parse_features_json(img.features_json),
-                    similarity=item['similarity'],
+                    similarity=similarity_percent,
                     created_at=img.created_at
                 ))
             if 'features_json' in query_features:

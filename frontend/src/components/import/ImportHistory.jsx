@@ -100,16 +100,7 @@ const ImportHistory = () => {
                                         <span className="text-slate-500 text-xs mb-1">Edge Density</span>
                                         <span className="text-slate-200 font-medium">{(item.edge_density * 100).toFixed(1)}%</span>
                                     </div>
-                                    <div className="flex flex-col">
-                                        <span className="text-slate-500 text-xs mb-1">Dominant Color</span>
-                                        <div className="flex items-center gap-2">
-                                            <div
-                                                className="w-4 h-4 rounded border border-slate-600"
-                                                style={{ backgroundColor: item.dominant_color_hex }}
-                                            />
-                                            <span className="text-slate-200 font-mono text-xs">{item.dominant_color_hex}</span>
-                                        </div>
-                                    </div>
+
                                     <div className="flex flex-col">
                                         <span className="text-slate-500 text-xs mb-1">Uploaded</span>
                                         <span className="text-slate-200 font-medium text-xs whitespace-nowrap">

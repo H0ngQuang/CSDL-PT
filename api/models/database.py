@@ -24,8 +24,7 @@ class ImageMetadata(Base):
     contrast = Column(Float)
     saturation = Column(Float)
     edge_density = Column(Float)
-    dominant_color_hex = Column(String(7))
-    dominant_colors_json = Column(Text)  # JSON array of top 3 colors with ratios
+
     features_json = Column(Text)
     dinov2_vector = Column(Vector(384))  # DINOv2 ViT-S/14 generates 384-dimensional embeddings
     created_at = Column(DateTime, default=datetime.utcnow)
