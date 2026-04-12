@@ -174,4 +174,45 @@ class ImageProcessor:
         """
         return content_type.startswith('image/')
 
+    @staticmethod
+    def compute_histogram_similarity(hist1: dict, hist2: dict) -> float:
+        """
+        Compute histogram intersection similarity between two histogram feature dicts.
+        Each dict has keys 'red', 'green', 'blue' with lists of bin ratios.
+        Returns a value in [0, 1] where 1 = identical histograms.
+        """
+        total_sim = 0.0
+        channels = ['red', 'green', 'blue']
+        
+        for channel in channels:
+            h1 = hist1.get(channel, [])
+            h2 = hist2.get(channel, [])
+            if h1 and h2 and len(h1) == len(h2):
+                # Histogram intersection: sum of min values
+                intersection = sum(min(a, b) for a, b in zip(h1, h2))
+                total_sim += intersection
+        
+        return total_sim / len(channels) if channels else 0.0
+
+    @staticmethod
+    def compute_feature_similarity(query_features: dict, candidate_features: dict) -> float:
+        """
+        Compute similarity based on image properties (brightness, contrast, saturation, edge_density).
+        Returns a value in [0, 1] where 1 = identical features.
+        """
+        import math
+        feature_keys = ['brightness', 'contrast', 'saturation', 'edge_density']
+        
+        sum_sq_diff = 0.0
+        for key in feature_keys:
+            q_val = float(query_features.get(key, 0.0) or 0.0)
+            c_val = float(candidate_features.get(key, 0.0) or 0.0)
+            sum_sq_diff += (q_val - c_val) ** 2
+        
+        # Max possible distance = sqrt(4 * 1^2) = 2.0
+        max_distance = math.sqrt(len(feature_keys))
+        distance = math.sqrt(sum_sq_diff)
+        
+        return 1.0 - (distance / max_distance)
+
 

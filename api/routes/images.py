@@ -206,7 +206,10 @@ async def search_similar_images(
     image_processor: ImageProcessor = Depends(get_image_processor)
 ):
     """
-    Search for similar images
+    Search for similar images using hybrid scoring:
+    - DINOv2 vector similarity (50%)
+    - Histogram intersection similarity (30%)
+    - Feature similarity: brightness, contrast, saturation, edge_density (20%)
     """
     try:
         # 1. Validate and Read Query Image
@@ -214,32 +217,82 @@ async def search_similar_images(
             raise HTTPException(status_code=400, detail="Invalid image file")
         
         content = await file.read()
-        
-        # 2. Save temporarily to extract features (or process in-memory if refactored, 
-        # but existing extract_features takes a path)
-        # We'll save it as a temp file
         file_path, unique_filename = image_processor.save_upload(content, file.filename)
         
         try:
-            # 3. Extract Features
+            # 2. Extract Features from query image
             query_features = image_processor.extract_features(file_path)
             
-            # Stage 1: Search using pgvector DINOv2 embeddings (100% vector similarity)
             query_vector = query_features.get('dinov2_vector')
             if not query_vector:
                 raise ValueError("Failed to extract DINOv2 vector from query image")
-                
+            
+            # 3. Get MORE candidates from pgvector for re-ranking
+            candidate_limit = max(limit * 3, 20)
             filtered_candidates = db_service.search_images_by_vector(
                 db=db, 
                 query_vector=query_vector, 
                 threshold=0.3,
-                limit=limit
+                limit=candidate_limit
             )
             
-            # Format Response
-            response = []
+            # 4. Parse query histogram for comparison
+            query_features_parsed = _parse_features_json(query_features.get('features_json'))
+            query_hist = None
+            if query_features_parsed and 'histogram' in query_features_parsed:
+                query_hist = query_features_parsed['histogram']
+            
+            # 5. Hybrid re-ranking
+            # Weights: DINOv2=50%, Histogram=30%, Features=20%
+            W_DINOV2 = 0.5
+            W_HISTOGRAM = 0.3
+            W_FEATURES = 0.2
+            
+            scored_results = []
             for img, vector_sim in filtered_candidates:
-                similarity_percent = float(vector_sim) * 100.0
+                dinov2_score = float(vector_sim)
+                
+                # Histogram intersection similarity
+                hist_sim = 0.0
+                if query_hist:
+                    candidate_features_parsed = _parse_features_json(img.features_json)
+                    if candidate_features_parsed and 'histogram' in candidate_features_parsed:
+                        hist_sim = ImageProcessor.compute_histogram_similarity(
+                            query_hist, candidate_features_parsed['histogram']
+                        )
+                
+                # Feature similarity (brightness, contrast, saturation, edge_density)
+                feat_sim = ImageProcessor.compute_feature_similarity(
+                    query_features,
+                    {
+                        'brightness': img.brightness or 0,
+                        'contrast': img.contrast or 0,
+                        'saturation': img.saturation or 0,
+                        'edge_density': img.edge_density or 0
+                    }
+                )
+                
+                # Weighted hybrid score
+                final_score = (W_DINOV2 * dinov2_score) + (W_HISTOGRAM * hist_sim) + (W_FEATURES * feat_sim)
+                
+                logger.info(
+                    f"🔍 {img.file_name}: "
+                    f"DINOv2={dinov2_score:.4f}, "
+                    f"Hist={hist_sim:.4f}, "
+                    f"Feat={feat_sim:.4f}, "
+                    f"Final={final_score:.4f}"
+                )
+                
+                scored_results.append((img, final_score))
+            
+            # 6. Sort by hybrid score (descending) and take top N
+            scored_results.sort(key=lambda x: x[1], reverse=True)
+            top_results = scored_results[:limit]
+            
+            # 7. Format Response
+            response = []
+            for img, hybrid_score in top_results:
+                similarity_percent = hybrid_score * 100.0
                 
                 response.append(ImageResponse(
                     id=img.id,
@@ -255,6 +308,7 @@ async def search_similar_images(
                     similarity=similarity_percent,
                     created_at=img.created_at
                 ))
+            
             if 'features_json' in query_features:
                 query_features['features_json'] = _parse_features_json(query_features['features_json'])
                 
@@ -264,9 +318,6 @@ async def search_similar_images(
             )
 
         finally:
-            # Cleanup temp file? 
-            # For this app, maybe we want to keep the uploaded search image?
-            # The prompt doesn't say. Let's keep it in uploads for now as it aids debugging/history if we wanted.
             pass
 
     except Exception as e:
